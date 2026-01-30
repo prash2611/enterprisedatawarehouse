@@ -1,1 +1,622 @@
+USE petshop;
 
+SET FOREIGN_KEY_CHECKS = 0;
+
+DROP TABLE IF EXISTS OrderPromotion;
+DROP TABLE IF EXISTS ProductPromotion;
+DROP TABLE IF EXISTS ProductCategory;
+DROP TABLE IF EXISTS ProductSupplier;
+
+DROP TABLE IF EXISTS Shipment;
+DROP TABLE IF EXISTS Payment;
+DROP TABLE IF EXISTS OrderItem;
+DROP TABLE IF EXISTS SalesOrder;
+
+DROP TABLE IF EXISTS Inventory;
+
+DROP TABLE IF EXISTS Employee;
+DROP TABLE IF EXISTS Store;
+
+DROP TABLE IF EXISTS Address;
+DROP TABLE IF EXISTS Customer;
+
+DROP TABLE IF EXISTS Promotion;
+DROP TABLE IF EXISTS Supplier;
+DROP TABLE IF EXISTS Product;
+DROP TABLE IF EXISTS Category;
+DROP TABLE IF EXISTS PetType;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- Reference tables
+
+CREATE TABLE PetType (
+    PetTypeID   INT AUTO_INCREMENT PRIMARY KEY,
+    PetTypeName VARCHAR(50) NOT NULL UNIQUE
+) ENGINE=InnoDB;
+
+CREATE TABLE Category (
+    CategoryID   INT AUTO_INCREMENT PRIMARY KEY,
+    CategoryName VARCHAR(80) NOT NULL UNIQUE
+) ENGINE=InnoDB;
+
+CREATE TABLE Supplier (
+    SupplierID   INT AUTO_INCREMENT PRIMARY KEY,
+    SupplierName VARCHAR(120) NOT NULL,
+    Email        VARCHAR(120) UNIQUE,
+    Phone        VARCHAR(30),
+    Country      VARCHAR(80) NOT NULL DEFAULT 'Germany',
+    IsActive     BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT CK_Supplier_Email CHECK (Email IS NULL OR Email LIKE '%_@_%._%')
+) ENGINE=InnoDB;
+
+CREATE TABLE Product (
+    ProductID      INT AUTO_INCREMENT PRIMARY KEY,
+    SKU            VARCHAR(40) NOT NULL UNIQUE,
+    ProductName    VARCHAR(150) NOT NULL,
+    PetTypeID      INT NOT NULL,
+    BasePrice      DECIMAL(10,2) NOT NULL,
+    IsDiscontinued BOOLEAN NOT NULL DEFAULT FALSE,
+    CreatedAt      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT FK_Product_PetType FOREIGN KEY (PetTypeID)
+        REFERENCES PetType(PetTypeID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CK_Product_BasePrice CHECK (BasePrice >= 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE Promotion (
+    PromotionID   INT AUTO_INCREMENT PRIMARY KEY,
+    PromoCode     VARCHAR(30) NOT NULL UNIQUE,
+    PromoName     VARCHAR(120) NOT NULL,
+    DiscountType  ENUM('PERCENT','AMOUNT') NOT NULL,
+    DiscountValue DECIMAL(10,2) NOT NULL,
+    StartDate     DATE NOT NULL,
+    EndDate       DATE NOT NULL,
+    CONSTRAINT CK_Promo_Dates CHECK (EndDate >= StartDate),
+    CONSTRAINT CK_Promo_Value CHECK (DiscountValue > 0)
+) ENGINE=InnoDB;
+
+-- Customer / Stores / Staff
+
+CREATE TABLE Customer (
+    CustomerID  INT AUTO_INCREMENT PRIMARY KEY,
+    FirstName   VARCHAR(60) NOT NULL,
+    LastName    VARCHAR(60) NOT NULL,
+    Email       VARCHAR(120) NOT NULL UNIQUE,
+    Phone       VARCHAR(30),
+    CreatedAt   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    LoyaltyTier ENUM('BRONZE','SILVER','GOLD') NOT NULL DEFAULT 'BRONZE',
+    CONSTRAINT CK_Customer_Email CHECK (Email LIKE '%_@_%._%')
+) ENGINE=InnoDB;
+
+CREATE TABLE Address (
+    AddressID   INT AUTO_INCREMENT PRIMARY KEY,
+    CustomerID  INT NOT NULL,
+    AddressType ENUM('SHIPPING','BILLING') NOT NULL DEFAULT 'SHIPPING',
+    Line1       VARCHAR(120) NOT NULL,
+    City        VARCHAR(80) NOT NULL,
+    Postcode    VARCHAR(20) NOT NULL,
+    Country     VARCHAR(80) NOT NULL DEFAULT 'Germany',
+    IsDefault   BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT FK_Address_Customer FOREIGN KEY (CustomerID)
+        REFERENCES Customer(CustomerID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE Store (
+    StoreID   INT AUTO_INCREMENT PRIMARY KEY,
+    StoreName VARCHAR(120) NOT NULL UNIQUE,
+    City      VARCHAR(80) NOT NULL,
+    IsActive  BOOLEAN NOT NULL DEFAULT TRUE
+) ENGINE=InnoDB;
+
+CREATE TABLE Employee (
+    EmployeeID    INT AUTO_INCREMENT PRIMARY KEY,
+    StoreID       INT NOT NULL,
+    FirstName     VARCHAR(60) NOT NULL,
+    LastName      VARCHAR(60) NOT NULL,
+    RoleName      VARCHAR(50) NOT NULL,
+    HireDate      DATE NOT NULL,
+    SalaryMonthly DECIMAL(10,2) NOT NULL,
+    CONSTRAINT FK_Employee_Store FOREIGN KEY (StoreID)
+        REFERENCES Store(StoreID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CK_Employee_Salary CHECK (SalaryMonthly >= 0)
+) ENGINE=InnoDB;
+
+-- Inventory & Orders (Hybrid)
+
+CREATE TABLE Inventory (
+    StoreID      INT NOT NULL,
+    ProductID    INT NOT NULL,
+    OnHandQty    INT NOT NULL DEFAULT 0,
+    ReorderLevel INT NOT NULL DEFAULT 10,
+    LastStockedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (StoreID, ProductID),
+    CONSTRAINT FK_Inventory_Store FOREIGN KEY (StoreID)
+        REFERENCES Store(StoreID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT FK_Inventory_Product FOREIGN KEY (ProductID)
+        REFERENCES Product(ProductID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CK_Inventory_Qty CHECK (OnHandQty >= 0 AND ReorderLevel >= 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE SalesOrder (
+    OrderID            INT AUTO_INCREMENT PRIMARY KEY,
+    CustomerID         INT NOT NULL,
+    StoreID            INT NULL,   -- allowed NULL for ONLINE orders
+    OrderChannel       ENUM('ONLINE','STORE') NOT NULL,
+    OrderDate          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    Status             ENUM('PLACED','PAID','SHIPPED','DELIVERED','CANCELLED') NOT NULL DEFAULT 'PLACED',
+    ShippingAddressID  INT NULL,
+    CONSTRAINT FK_Order_Customer FOREIGN KEY (CustomerID)
+        REFERENCES Customer(CustomerID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT FK_Order_Store FOREIGN KEY (StoreID)
+        REFERENCES Store(StoreID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT FK_Order_ShippingAddress FOREIGN KEY (ShippingAddressID)
+        REFERENCES Address(AddressID)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+
+CREATE TABLE OrderItem (
+    OrderItemID INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID     INT NOT NULL,
+    ProductID   INT NOT NULL,
+    Qty         INT NOT NULL,
+    UnitPrice   DECIMAL(10,2) NOT NULL,
+    CONSTRAINT FK_OrderItem_Order FOREIGN KEY (OrderID)
+        REFERENCES SalesOrder(OrderID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT FK_OrderItem_Product FOREIGN KEY (ProductID)
+        REFERENCES Product(ProductID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CK_OrderItem_Qty CHECK (Qty > 0),
+    CONSTRAINT CK_OrderItem_UnitPrice CHECK (UnitPrice >= 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE Payment (
+    PaymentID     INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID       INT NOT NULL UNIQUE, -- 1 payment per order
+    PaymentMethod ENUM('CARD','PAYPAL','CASH','BANK') NOT NULL,
+    Amount        DECIMAL(12,2) NOT NULL,
+    PaidAt        DATETIME NULL,
+    PaymentStatus ENUM('PENDING','SUCCESS','FAILED','REFUNDED') NOT NULL DEFAULT 'PENDING',
+    CONSTRAINT FK_Payment_Order FOREIGN KEY (OrderID)
+        REFERENCES SalesOrder(OrderID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT CK_Payment_Amount CHECK (Amount >= 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE Shipment (
+    ShipmentID   INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID      INT NOT NULL UNIQUE, -- 1 shipment per order
+    Carrier      VARCHAR(50) NOT NULL,
+    TrackingNo   VARCHAR(60) UNIQUE,
+    ShippedAt    DATETIME NULL,
+    DeliveredAt  DATETIME NULL,
+    CONSTRAINT FK_Shipment_Order FOREIGN KEY (OrderID)
+        REFERENCES SalesOrder(OrderID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT CK_Shipment_Dates CHECK (DeliveredAt IS NULL OR ShippedAt IS NULL OR DeliveredAt >= ShippedAt)
+) ENGINE=InnoDB;
+
+-- Junction tables (M:N relationships)
+
+-- Product - Supplier (M:N)
+CREATE TABLE ProductSupplier (
+    ProductID    INT NOT NULL,
+    SupplierID   INT NOT NULL,
+    SupplierCost DECIMAL(10,2) NOT NULL,
+    LeadTimeDays INT NOT NULL DEFAULT 3,
+    PRIMARY KEY (ProductID, SupplierID),
+    CONSTRAINT FK_PS_Product FOREIGN KEY (ProductID)
+        REFERENCES Product(ProductID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT FK_PS_Supplier FOREIGN KEY (SupplierID)
+        REFERENCES Supplier(SupplierID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CK_PS_Cost CHECK (SupplierCost >= 0),
+    CONSTRAINT CK_PS_Lead CHECK (LeadTimeDays >= 0)
+) ENGINE=InnoDB;
+
+-- Product - Category (M:N)
+CREATE TABLE ProductCategory (
+    ProductID  INT NOT NULL,
+    CategoryID INT NOT NULL,
+    PRIMARY KEY (ProductID, CategoryID),
+    CONSTRAINT FK_PC_Product FOREIGN KEY (ProductID)
+        REFERENCES Product(ProductID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT FK_PC_Category FOREIGN KEY (CategoryID)
+        REFERENCES Category(CategoryID)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+-- Product - Promotion (M:N)
+CREATE TABLE ProductPromotion (
+    ProductID   INT NOT NULL,
+    PromotionID INT NOT NULL,
+    PRIMARY KEY (ProductID, PromotionID),
+    CONSTRAINT FK_PP_Product FOREIGN KEY (ProductID)
+        REFERENCES Product(ProductID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT FK_PP_Promotion FOREIGN KEY (PromotionID)
+        REFERENCES Promotion(PromotionID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- SalesOrder - Promotion (M:N)
+CREATE TABLE OrderPromotion (
+    OrderID     INT NOT NULL,
+    PromotionID INT NOT NULL,
+    PRIMARY KEY (OrderID, PromotionID),
+    CONSTRAINT FK_OP_Order FOREIGN KEY (OrderID)
+        REFERENCES SalesOrder(OrderID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT FK_OP_Promotion FOREIGN KEY (PromotionID)
+        REFERENCES Promotion(PromotionID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+SHOW DATABASES;
+USE petshop;   
+SELECT DATABASE();
+SHOW TABLES;
+
+INSERT INTO PetType (PetTypeName) VALUES
+('Dog'), ('Cat'), ('Bird'), ('Fish'), ('SmallPet');
+
+INSERT INTO Category (CategoryName) VALUES
+('Food'), ('Toys'), ('Grooming'), ('Health'), ('Accessories');
+
+-- suppliers
+INSERT INTO Supplier (SupplierName, Email, Phone, Country, IsActive) VALUES
+('PetNutrition GmbH', 'sales@petnutrition.de', '030-111111', 'Germany', TRUE),
+('HappyPaws Wholesale', 'contact@happypaws.eu', '030-222222', 'Germany', TRUE),
+('AquaWorld Supplies', 'info@aquaworld.com', '040-333333', 'Netherlands', TRUE),
+('BirdLife Partners', 'hello@birdlife.eu', '089-444444', 'Austria', TRUE),
+('CareVet Distribution', 'orders@carevet.eu', '069-555555', 'Germany', TRUE);
+
+-- store 
+INSERT INTO Store (StoreName, City, IsActive) VALUES
+('PetShop Berlin Mitte','Berlin',TRUE),
+('PetShop Berlin Neukölln','Berlin',TRUE),
+('PetShop Potsdam Center','Potsdam',TRUE),
+('PetShop Leipzig Hauptbahnhof','Leipzig',TRUE),
+('PetShop Hamburg Altona','Hamburg',TRUE);
+
+-- employee
+INSERT INTO Employee (StoreID, FirstName, LastName, RoleName, HireDate, SalaryMonthly) VALUES
+(1,'Lea','Braun','Manager','2023-03-01',3500),
+(1,'Tom','Weber','Cashier','2024-06-15',2400),
+(2,'Nora','Klein','Manager','2022-10-01',3600),
+(3,'Paul','Wagner','Sales','2024-01-10',2600),
+(4,'Emma','Neumann','Sales','2023-09-05',2700);
+
+-- product
+INSERT INTO Product (SKU, ProductName, PetTypeID, BasePrice, IsDiscontinued) VALUES
+('DOG-FOOD-001', 'Premium Dog Kibble 5kg', 1, 29.99, FALSE),
+('CAT-TOY-010',  'Cat Wand Toy Feather',   2,  7.49, FALSE),
+('FISH-ACC-100', 'Aquarium Filter Medium', 4, 39.90, FALSE),
+('BIRD-FOOD-020','Parrot Seed Mix 2kg',    3, 18.50, FALSE),
+('DOG-GRM-005',  'Dog Shampoo Sensitive',  1, 12.00, FALSE),
+('CAT-FOOD-002', 'Wet Cat Food Pack 12',   2, 16.99, FALSE),
+('DOG-TOY-015',  'Rubber Chew Toy',        1,  9.99, FALSE);
+
+-- Promotion
+INSERT INTO Promotion (PromoCode, PromoName, DiscountType, DiscountValue, StartDate, EndDate) VALUES
+('WELCOME10', 'Welcome 10% Off', 'PERCENT', 10, '2025-01-01', '2026-12-31'),
+('JAN5',      'January €5 Off',  'AMOUNT',   5, '2026-01-01', '2026-01-31'),
+('DOG15',     'Dog Care 15%',    'PERCENT', 15, '2026-01-10', '2026-02-28'),
+('FISH7',     'Fish Gear €7 Off','AMOUNT',   7, '2026-01-15', '2026-03-15'),
+('TOY20',     'Toys 20%',        'PERCENT', 20, '2026-01-01', '2026-02-15');
+
+-- customers
+INSERT INTO Customer (FirstName, LastName, Email, Phone, LoyaltyTier) VALUES
+('Ali',   'Khan',     'ali.khan@email.com',     '0176-100000', 'BRONZE'),
+('Sara',  'Meyer',    'sara.meyer@email.com',   '0176-200000', 'SILVER'),
+('Jonas', 'Schmidt',  'jonas.schmidt@email.com','0176-300000', 'GOLD'),
+('Mina',  'Hoffmann', 'mina.h@email.com',       '0176-400000', 'BRONZE'),
+('David', 'Fischer',  'd.fischer@email.com',    '0176-500000', 'SILVER');
+
+-- Address
+INSERT INTO Address (CustomerID, AddressType, Line1, City, Postcode, Country, IsDefault) VALUES
+(1,'SHIPPING','Karl-Marx-Str. 10','Berlin','12043','Germany',TRUE),
+(1,'BILLING', 'Karl-Marx-Str. 10','Berlin','12043','Germany',TRUE),
+(2,'SHIPPING','Sonnenallee 22','Berlin','12059','Germany',TRUE),
+(3,'SHIPPING','Hauptstr. 5','Potsdam','14467','Germany',TRUE),
+(4,'SHIPPING','Ringbahnstr. 77','Berlin','10999','Germany',TRUE),
+(5,'SHIPPING','Bahnhofstr. 1','Leipzig','04109','Germany',TRUE);
+
+-- validating the data inserted 
+SELECT CustomerID, Email FROM Customer ORDER BY CustomerID;
+SELECT AddressID, CustomerID FROM Address ORDER BY AddressID;
+
+-- inventory
+INSERT INTO Inventory (StoreID, ProductID, OnHandQty, ReorderLevel) VALUES
+(1,1,40,15),
+(1,2,120,30),
+(2,5,25,10),
+(3,3,10,8),
+(4,4,18,10),
+(2,6,12,12),
+(5,7,50,20);
+
+-- ProductSupplier
+INSERT INTO ProductSupplier (ProductID, SupplierID, SupplierCost, LeadTimeDays) VALUES
+(1,1,18.00,4),
+(2,2, 3.10,2),
+(3,3,25.00,5),
+(4,4,11.00,3),
+(5,5, 7.00,4),
+(6,1,10.00,4),
+(7,2, 4.20,2);
+
+-- ProductCategory
+INSERT INTO ProductCategory (ProductID, CategoryID) VALUES
+(1,1),(2,2),(3,5),(4,1),(5,3),(6,1),(7,2);
+
+-- ProductPromotion
+INSERT INTO ProductPromotion (ProductID, PromotionID) VALUES
+(1,3),(2,5),(3,4),(5,3),(7,5);
+
+-- orders
+INSERT INTO SalesOrder (CustomerID, StoreID, OrderChannel, OrderDate, Status, ShippingAddressID) VALUES
+(1, NULL, 'ONLINE', '2026-01-05 10:10:00', 'PAID',      1),
+(2, 1,    'STORE',  '2026-01-10 14:20:00', 'PAID',      NULL),
+(3, NULL, 'ONLINE', '2026-01-15 09:05:00', 'SHIPPED',   4),
+(4, 2,    'STORE',  '2026-01-18 18:40:00', 'DELIVERED', NULL),
+(5, NULL, 'ONLINE', '2026-01-22 12:00:00', 'PAID',      6),
+(2, NULL, 'ONLINE', '2026-01-25 08:00:00', 'PAID',      3);
+
+-- OrderItem
+INSERT INTO OrderItem (OrderID, ProductID, Qty, UnitPrice) VALUES
+(1,1,1,29.99),
+(1,2,2, 7.49),
+(2,5,1,12.00),
+(3,3,1,39.90),
+(5,4,2,18.50),
+(6,6,1,16.99),
+(6,7,2, 9.99);
+
+-- OrderPromotion
+INSERT INTO OrderPromotion (OrderID, PromotionID) VALUES
+(1,1),(2,2),(3,4),(4,5),(5,1),(6,1);
+
+-- Payment
+INSERT INTO Payment (OrderID, PaymentMethod, Amount, PaidAt, PaymentStatus) VALUES
+(1,'CARD', 44.97,'2026-01-05 10:12:00','SUCCESS'),
+(2,'CASH', 12.00,'2026-01-10 14:21:00','SUCCESS'),
+(3,'PAYPAL',39.90,'2026-01-15 09:06:00','SUCCESS'),
+(4,'CARD',   7.49,'2026-01-18 18:41:00','SUCCESS'),
+(5,'BANK',  37.00,'2026-01-22 12:01:00','SUCCESS'),
+(6,'CARD',  36.97,'2026-01-25 08:02:00','SUCCESS');
+
+-- Shipment (online orders only)
+INSERT INTO Shipment (OrderID, Carrier, TrackingNo, ShippedAt, DeliveredAt) VALUES
+(1,'DHL','DHL-0001','2026-01-06 08:00:00','2026-01-07 15:00:00'),
+(3,'DHL','DHL-0003','2026-01-16 08:30:00',NULL),
+(5,'Hermes','HER-0005','2026-01-23 09:00:00',NULL),
+(6,'DHL','DHL-0006','2026-01-25 12:00:00',NULL);
+
+-- two view
+CREATE OR REPLACE VIEW v_MonthlyRevenue_ChannelStore AS
+SELECT
+    DATE_FORMAT(o.OrderDate, '%Y-%m-01') AS RevenueMonth,
+    o.OrderChannel,
+    COALESCE(s.StoreName, 'ONLINE') AS StoreName,
+    SUM(oi.Qty * oi.UnitPrice) AS GrossRevenue
+FROM SalesOrder o
+JOIN OrderItem oi ON oi.OrderID = o.OrderID
+LEFT JOIN Store s ON s.StoreID = o.StoreID
+WHERE o.Status <> 'CANCELLED'
+GROUP BY DATE_FORMAT(o.OrderDate, '%Y-%m-01'),
+         o.OrderChannel,
+         COALESCE(s.StoreName, 'ONLINE');
+
+CREATE OR REPLACE VIEW v_DailyProductDemand AS
+SELECT
+    DATE(o.OrderDate) AS OrderDay,
+    p.ProductName,
+    SUM(oi.Qty) AS UnitsSold
+FROM SalesOrder o
+JOIN OrderItem oi ON oi.OrderID = o.OrderID
+JOIN Product p ON p.ProductID = oi.ProductID
+WHERE o.Status <> 'CANCELLED'
+GROUP BY DATE(o.OrderDate), p.ProductName;
+
+-- testing views
+SELECT * FROM v_MonthlyRevenue_ChannelStore;
+SELECT * FROM v_DailyProductDemand;
+
+-- user define function
+DELIMITER $$
+CREATE FUNCTION fn_effective_unit_price(
+    p_product_id INT,
+    p_base_price DECIMAL(10,2),
+    p_on_date DATE
+)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE v_discount DECIMAL(10,2);
+
+    SELECT MAX(
+        CASE
+            WHEN pr.DiscountType = 'AMOUNT' THEN pr.DiscountValue
+            WHEN pr.DiscountType = 'PERCENT' THEN (p_base_price * pr.DiscountValue / 100.0)
+        END
+    )
+    INTO v_discount
+    FROM ProductPromotion pp
+    JOIN Promotion pr ON pr.PromotionID = pp.PromotionID
+    WHERE pp.ProductID = p_product_id
+      AND p_on_date BETWEEN pr.StartDate AND pr.EndDate;
+
+    RETURN (p_base_price - IFNULL(v_discount, 0));
+END$$
+
+DELIMITER ;
+-- testing  function
+SELECT
+  ProductID,
+  BasePrice,
+  fn_effective_unit_price(ProductID, BasePrice, '2026-01-20') AS EffectivePrice
+FROM Product;
+
+-- stored procedure
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_customer_order_summary(
+    IN p_customer_id INT,
+    IN p_from_date DATE,
+    IN p_to_date DATE
+)
+BEGIN
+    SELECT
+        c.CustomerID,
+        CONCAT(c.FirstName, ' ', c.LastName) AS CustomerName,
+        COUNT(DISTINCT o.OrderID) AS TotalOrders,
+        ROUND(SUM(oi.Qty * oi.UnitPrice), 2) AS TotalSpend
+    FROM Customer c
+    JOIN SalesOrder o ON o.CustomerID = c.CustomerID
+    JOIN OrderItem oi ON oi.OrderID = o.OrderID
+    WHERE c.CustomerID = p_customer_id
+      AND o.OrderDate >= p_from_date
+      AND o.OrderDate < DATE_ADD(p_to_date, INTERVAL 1 DAY)
+      AND o.Status <> 'CANCELLED'
+    GROUP BY c.CustomerID, CustomerName;
+END$$
+
+DELIMITER ;
+
+-- calling store procedure
+CALL sp_customer_order_summary(1, '2026-01-01', '2026-01-31');
+
+
+-- multi table join -- querry 1
+SELECT
+    o.OrderChannel,
+    COALESCE(s.StoreName, 'ONLINE') AS StoreName,
+    SUM(oi.Qty * oi.UnitPrice) AS Revenue
+FROM SalesOrder o
+JOIN OrderItem oi ON oi.OrderID = o.OrderID
+LEFT JOIN Store s ON s.StoreID = o.StoreID
+GROUP BY o.OrderChannel, StoreName;
+
+-- group by and having -- querry 2
+SELECT
+    c.CustomerID,
+    CONCAT(c.FirstName, ' ', c.LastName) AS CustomerName,
+    SUM(oi.Qty * oi.UnitPrice) AS TotalSpend
+FROM Customer c
+JOIN SalesOrder o ON o.CustomerID = c.CustomerID
+JOIN OrderItem oi ON oi.OrderID = o.OrderID
+GROUP BY c.CustomerID, CustomerName
+HAVING SUM(oi.Qty * oi.UnitPrice) > 30;
+
+-- case expression -- querry 3
+SELECT
+    s.StoreName,
+    p.ProductName,
+    i.OnHandQty,
+    CASE
+        WHEN i.OnHandQty <= i.ReorderLevel THEN 'LOW STOCK'
+        WHEN i.OnHandQty >= i.ReorderLevel * 5 THEN 'OVERSTOCK'
+        ELSE 'OK'
+    END AS StockStatus
+FROM Inventory i
+JOIN Store s ON s.StoreID = i.StoreID
+JOIN Product p ON p.ProductID = i.ProductID;
+
+-- Subquery -- querry 4
+SELECT
+    p.ProductName,
+    SUM(oi.Qty) AS UnitsSold
+FROM Product p
+JOIN OrderItem oi ON oi.ProductID = p.ProductID
+GROUP BY p.ProductName
+HAVING SUM(oi.Qty) >
+(
+    SELECT AVG(t.total_units)
+    FROM (
+        SELECT SUM(Qty) AS total_units
+        FROM OrderItem
+        GROUP BY ProductID
+    ) t
+);
+-- Window Function -- querry 5
+SELECT *
+FROM (
+    SELECT
+        o.OrderChannel,
+        p.ProductName,
+        SUM(oi.Qty * oi.UnitPrice) AS Revenue,
+        DENSE_RANK() OVER (PARTITION BY o.OrderChannel ORDER BY SUM(oi.Qty * oi.UnitPrice) DESC) AS RankNo
+    FROM SalesOrder o
+    JOIN OrderItem oi ON oi.OrderID = o.OrderID
+    JOIN Product p ON p.ProductID = oi.ProductID
+    GROUP BY o.OrderChannel, p.ProductName
+) ranked
+WHERE RankNo <= 3;
+
+
+-- task 5 optimization
+/* 1) SLOW / INEFFICIENT QUERY (purposely created) */
+EXPLAIN
+SELECT
+    p.ProductID,
+    p.ProductName,
+    SUM(oi.Qty * oi.UnitPrice) AS Revenue
+FROM Product p
+JOIN OrderItem oi ON oi.ProductID = p.ProductID
+JOIN SalesOrder o ON o.OrderID = oi.OrderID
+WHERE DATE(o.OrderDate) BETWEEN '2026-01-01' AND '2026-01-31'
+  AND o.Status <> 'CANCELLED'
+GROUP BY p.ProductID, p.ProductName
+ORDER BY Revenue DESC;
+
+
+/* 2) OPTIMISATION STRATEGY #1: ADD INDEXES */
+CREATE INDEX idx_salesorder_orderdate_status ON SalesOrder (OrderDate, Status);
+CREATE INDEX idx_orderitem_orderid_productid ON OrderItem (OrderID, ProductID);
+
+/* 3) OPTIMISATION STRATEGY #2: REWRITE QUERY (make it sargable + simpler) */
+EXPLAIN
+SELECT
+    p.ProductID,
+    p.ProductName,
+    SUM(oi.Qty * oi.UnitPrice) AS Revenue
+FROM SalesOrder o
+JOIN OrderItem oi ON oi.OrderID = o.OrderID
+JOIN Product p ON p.ProductID = oi.ProductID
+WHERE o.OrderDate >= '2026-01-01'
+  AND o.OrderDate <  '2026-02-01'
+  AND o.Status <> 'CANCELLED'
+GROUP BY p.ProductID, p.ProductName
+ORDER BY Revenue DESC;
